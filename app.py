@@ -1,6 +1,4 @@
 from pathlib import Path
-import re
-
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -24,28 +22,7 @@ DATA_FILE = Path(__file__).parent / "data" / "shiny_data.xlsx"
 
 
 # =========================================================
-# 3. 读取数据
-# =========================================================
-@st.cache_data
-def load_data():
-    if not DATA_FILE.exists():
-        raise FileNotFoundError(f"未找到数据文件: {DATA_FILE}")
-
-    merge_data = pd.read_excel(DATA_FILE, sheet_name="merge_data")
-    target_shop_month_output_wide = pd.read_excel(
-        DATA_FILE,
-        sheet_name="target_shop_month_output_wide"
-    )
-    target_freq_data = pd.read_excel(
-        DATA_FILE,
-        sheet_name="target_频次信息_data"
-    )
-
-    return merge_data, target_shop_month_output_wide, target_freq_data
-
-
-# =========================================================
-# 4. 格式化函数
+# 3. 格式化函数
 # =========================================================
 def fmt_num(x, digits=2):
     if pd.isna(x):
@@ -72,21 +49,75 @@ def fmt_text(x):
     return value if value else "-"
 
 
-def extract_month_num(text):
-    match = re.search(r"(\d+)月", str(text))
-    if match:
-        return int(match.group(1))
-    return None
+# =========================================================
+# 4. 读取原始数据（一次性读取多个 sheet）
+# =========================================================
+@st.cache_data(show_spinner=False)
+def load_raw_data():
+    if not DATA_FILE.exists():
+        raise FileNotFoundError(f"未找到数据文件: {DATA_FILE}")
+
+    sheets = pd.read_excel(
+        DATA_FILE,
+        sheet_name=[
+            "merge_data",
+            "target_shop_month_output_wide",
+            "target_频次信息_data"
+        ]
+    )
+
+    merge_data = sheets["merge_data"].copy()
+    income_wide = sheets["target_shop_month_output_wide"].copy()
+    freq_wide = sheets["target_频次信息_data"].copy()
+
+    # 统一店铺字段类型，避免后续反复 astype(str)
+    for df in [merge_data, income_wide, freq_wide]:
+        if "店铺" in df.columns:
+            df["店铺"] = df["店铺"].astype(str).str.strip()
+
+    return merge_data, income_wide, freq_wide
 
 
 # =========================================================
-# 5. 图表函数：收入分层
+# 5. 预处理：基础信息表
 # =========================================================
-def make_income_layer_plot(df_income_wide: pd.DataFrame, selected_store: str):
-    df = df_income_wide[df_income_wide["店铺"].astype(str) == str(selected_store)].copy()
+@st.cache_data(show_spinner=False)
+def prepare_shop_base(merge_data: pd.DataFrame):
+    if "店铺" not in merge_data.columns:
+        raise ValueError("merge_data 中缺少列：店铺")
 
-    if df.empty:
-        return None
+    df = merge_data.copy()
+    df["店铺"] = df["店铺"].astype(str).str.strip()
+
+    df = df.dropna(subset=["店铺"])
+    df = df[df["店铺"] != ""]
+
+    # 每个店铺只保留第一条记录
+    shop_base = (
+        df.drop_duplicates(subset=["店铺"], keep="first")
+        .set_index("店铺", drop=False)
+        .sort_index()
+    )
+
+    store_list = shop_base["店铺"].tolist()
+
+    return shop_base, store_list
+
+
+# =========================================================
+# 6. 预处理：收入分层宽表 -> 长表
+# =========================================================
+@st.cache_data(show_spinner=False)
+def prepare_income_long(income_wide: pd.DataFrame):
+    if "店铺" not in income_wide.columns:
+        return pd.DataFrame()
+
+    df = income_wide.copy()
+    df["店铺"] = df["店铺"].astype(str).str.strip()
+
+    value_cols = [c for c in df.columns if c != "店铺"]
+    if not value_cols:
+        return pd.DataFrame()
 
     df = df.melt(
         id_vars=["店铺"],
@@ -94,32 +125,116 @@ def make_income_layer_plot(df_income_wide: pd.DataFrame, selected_store: str):
         value_name="数值"
     )
 
-    df["月份"] = df["name"].astype(str).str.extract(r"^(\d+月)")
+    name_series = df["name"].astype(str)
+
+    df["月份"] = name_series.str.extract(r"^(\d+月)", expand=False)
     df["分层"] = (
-        df["name"]
-        .astype(str)
+        name_series
         .str.replace(r"^\d+月", "", regex=True)
         .str.strip()
     )
-    df["月份数值"] = df["月份"].apply(extract_month_num)
+
+    df["月份数值"] = pd.to_numeric(
+        df["月份"].str.extract(r"(\d+)", expand=False),
+        errors="coerce"
+    )
     df["数值"] = pd.to_numeric(df["数值"], errors="coerce").round(2)
 
-    df = df.dropna(subset=["月份数值", "数值"])
-
-    if df.empty:
-        return None
-
-    month_order = [f"{i}月" for i in range(12, 0, -1)]
     layer_order = [
         "0-25%的机器",
         "25%-50%的机器",
         "50%-75%的机器",
         "75%-100%的机器"
     ]
+    month_order = [f"{i}月" for i in range(12, 0, -1)]
+
+    df = df.dropna(subset=["店铺", "月份", "月份数值", "数值"])
+    df = df[df["分层"].isin(layer_order)]
 
     df["月份"] = pd.Categorical(df["月份"], categories=month_order, ordered=True)
     df["分层"] = pd.Categorical(df["分层"], categories=layer_order, ordered=True)
-    df = df.sort_values(["月份数值", "分层"], ascending=[False, True])
+
+    df = df.sort_values(
+        ["店铺", "月份数值", "分层"],
+        ascending=[True, False, True]
+    ).reset_index(drop=True)
+
+    return df
+
+
+# =========================================================
+# 7. 预处理：频次宽表 -> 长表
+# =========================================================
+@st.cache_data(show_spinner=False)
+def prepare_freq_long(freq_wide: pd.DataFrame):
+    if "店铺" not in freq_wide.columns:
+        return pd.DataFrame()
+
+    df = freq_wide.copy()
+    df["店铺"] = df["店铺"].astype(str).str.strip()
+
+    value_cols = [c for c in df.columns if c != "店铺"]
+    if not value_cols:
+        return pd.DataFrame()
+
+    df = df.melt(
+        id_vars=["店铺"],
+        var_name="name",
+        value_name="数值"
+    )
+
+    name_series = df["name"].astype(str)
+
+    df["月份"] = name_series.str.extract(r"^(\d+月)", expand=False)
+    df["月份数值"] = pd.to_numeric(
+        df["月份"].str.extract(r"(\d+)", expand=False),
+        errors="coerce"
+    )
+
+    # 注意顺序：先判断 TOP25%，避免被“频次均值”提前匹配
+    df["指标"] = pd.Series(pd.NA, index=df.index, dtype="object")
+    df.loc[name_series.str.contains("TOP25%机器频次均值", na=False), "指标"] = "TOP25%机器频次均值"
+    df.loc[
+        name_series.str.contains("频次均值", na=False) &
+        ~name_series.str.contains("TOP25%机器频次均值", na=False),
+        "指标"
+    ] = "全店频次均值"
+
+    df["数值"] = pd.to_numeric(df["数值"], errors="coerce").round(2)
+
+    month_order = [f"{i}月" for i in range(12, 0, -1)]
+    metric_order = ["TOP25%机器频次均值", "全店频次均值"]
+
+    df = df.dropna(subset=["店铺", "月份", "月份数值", "指标", "数值"])
+    df = df[df["指标"].isin(metric_order)]
+
+    df["月份"] = pd.Categorical(df["月份"], categories=month_order, ordered=True)
+    df["指标"] = pd.Categorical(df["指标"], categories=metric_order, ordered=True)
+
+    df = df.sort_values(
+        ["店铺", "月份数值", "指标"],
+        ascending=[True, False, True]
+    ).reset_index(drop=True)
+
+    return df
+
+
+# =========================================================
+# 8. 图表函数：收入分层
+# =========================================================
+def make_income_layer_plot(df_income_long: pd.DataFrame, selected_store: str):
+    df = df_income_long[df_income_long["店铺"] == selected_store]
+
+    if df.empty:
+        return None
+
+    layer_order = [
+        "0-25%的机器",
+        "25%-50%的机器",
+        "50%-75%的机器",
+        "75%-100%的机器"
+    ]
+    month_order = [f"{i}月" for i in range(12, 0, -1)]
 
     color_map = {
         "0-25%的机器": "#6395a5",
@@ -131,7 +246,7 @@ def make_income_layer_plot(df_income_wide: pd.DataFrame, selected_store: str):
     fig = go.Figure()
 
     for layer in layer_order:
-        sub = df[df["分层"] == layer].copy()
+        sub = df[df["分层"] == layer]
         if sub.empty:
             continue
 
@@ -142,7 +257,7 @@ def make_income_layer_plot(df_income_wide: pd.DataFrame, selected_store: str):
                 name=layer,
                 orientation="h",
                 marker=dict(color=color_map[layer]),
-                text=[f"{v:.2f}" for v in sub["数值"]],
+                text=sub["数值"].map(lambda v: f"{v:.2f}"),
                 textposition="outside",
                 hovertemplate=(
                     "月份: %{y}<br>"
@@ -178,45 +293,16 @@ def make_income_layer_plot(df_income_wide: pd.DataFrame, selected_store: str):
 
 
 # =========================================================
-# 6. 图表函数：频次
+# 9. 图表函数：频次
 # =========================================================
-def make_freq_plot(df_freq_wide: pd.DataFrame, selected_store: str):
-    df = df_freq_wide[df_freq_wide["店铺"].astype(str) == str(selected_store)].copy()
+def make_freq_plot(df_freq_long: pd.DataFrame, selected_store: str):
+    df = df_freq_long[df_freq_long["店铺"] == selected_store]
 
     if df.empty:
         return None
 
-    df = df.melt(
-        id_vars=["店铺"],
-        var_name="name",
-        value_name="数值"
-    )
-
-    df["月份"] = df["name"].astype(str).str.extract(r"^(\d+月)")
-    df["月份数值"] = df["月份"].apply(extract_month_num)
-
-    def parse_metric(name):
-        text = str(name)
-        if "TOP25%机器频次均值" in text:
-            return "TOP25%机器频次均值"
-        if "频次均值" in text:
-            return "全店频次均值"
-        return None
-
-    df["指标"] = df["name"].apply(parse_metric)
-    df["数值"] = pd.to_numeric(df["数值"], errors="coerce").round(2)
-
-    df = df.dropna(subset=["月份数值", "指标", "数值"])
-
-    if df.empty:
-        return None
-
-    month_order = [f"{i}月" for i in range(12, 0, -1)]
     metric_order = ["TOP25%机器频次均值", "全店频次均值"]
-
-    df["月份"] = pd.Categorical(df["月份"], categories=month_order, ordered=True)
-    df["指标"] = pd.Categorical(df["指标"], categories=metric_order, ordered=True)
-    df = df.sort_values(["月份数值", "指标"], ascending=[False, True])
+    month_order = [f"{i}月" for i in range(12, 0, -1)]
 
     color_map = {
         "TOP25%机器频次均值": "#051c2c",
@@ -226,7 +312,7 @@ def make_freq_plot(df_freq_wide: pd.DataFrame, selected_store: str):
     fig = go.Figure()
 
     for metric in metric_order:
-        sub = df[df["指标"] == metric].copy()
+        sub = df[df["指标"] == metric]
         if sub.empty:
             continue
 
@@ -237,7 +323,7 @@ def make_freq_plot(df_freq_wide: pd.DataFrame, selected_store: str):
                 name=metric,
                 orientation="h",
                 marker=dict(color=color_map[metric]),
-                text=[f"{v:.2f}" for v in sub["数值"]],
+                text=sub["数值"].map(lambda v: f"{v:.2f}"),
                 textposition="outside",
                 hovertemplate=(
                     "月份: %{y}<br>"
@@ -273,47 +359,40 @@ def make_freq_plot(df_freq_wide: pd.DataFrame, selected_store: str):
 
 
 # =========================================================
-# 7. 主程序
+# 10. 加载与预处理
 # =========================================================
 try:
-    merge_data, income_data, freq_data = load_data()
+    merge_data, income_wide, freq_wide = load_raw_data()
+    shop_base, store_list = prepare_shop_base(merge_data)
+    income_long = prepare_income_long(income_wide)
+    freq_long = prepare_freq_long(freq_wide)
 except Exception as e:
     st.error(f"数据加载失败：{e}")
     st.stop()
-
-if "店铺" not in merge_data.columns:
-    st.error("merge_data 中缺少列：店铺")
-    st.stop()
-
-store_list = (
-    merge_data["店铺"]
-    .dropna()
-    .astype(str)
-    .drop_duplicates()
-    .tolist()
-)
 
 if len(store_list) == 0:
     st.error("没有可选店铺，请检查数据。")
     st.stop()
 
+
+# =========================================================
+# 11. 店铺选择
+# =========================================================
 selected_store = st.selectbox(
     "请选择店铺",
     options=store_list,
     index=0
 )
 
-shop_df = merge_data[merge_data["店铺"].astype(str) == str(selected_store)].copy()
-
-if shop_df.empty:
+if selected_store not in shop_base.index:
     st.warning("当前店铺没有匹配数据。")
     st.stop()
 
-row = shop_df.iloc[0]
+row = shop_base.loc[selected_store]
 
 
 # =========================================================
-# 8. 基础信息展示
+# 12. 基础信息展示
 # =========================================================
 st.subheader(f"{selected_store}｜经营画像")
 
@@ -342,10 +421,10 @@ st.divider()
 
 
 # =========================================================
-# 9. 图表展示
+# 13. 图表展示
 # =========================================================
 st.subheader("机器收入分层月度表现")
-income_fig = make_income_layer_plot(income_data, selected_store)
+income_fig = make_income_layer_plot(income_long, selected_store)
 if income_fig is None:
     st.info("当前店铺暂无收入分层数据。")
 else:
@@ -354,7 +433,7 @@ else:
 st.divider()
 
 st.subheader("机器频次月度表现")
-freq_fig = make_freq_plot(freq_data, selected_store)
+freq_fig = make_freq_plot(freq_long, selected_store)
 if freq_fig is None:
     st.info("当前店铺暂无频次数据。")
 else:
