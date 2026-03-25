@@ -531,7 +531,11 @@ income_fig = make_grouped_horizontal_bar(
 if income_fig is None:
     st.info("当前店铺暂无收入分层数据。")
 else:
-    st.plotly_chart(income_fig, use_container_width=True)
+    st.plotly_chart(
+        income_fig,
+        use_container_width=True,
+        config={"displayModeBar": False}
+    )
 st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown('<div class="panel-card">', unsafe_allow_html=True)
@@ -547,5 +551,9 @@ freq_fig = make_grouped_horizontal_bar(
 if freq_fig is None:
     st.info("当前店铺暂无频次数据。")
 else:
-    st.plotly_chart(freq_fig, use_container_width=True)
+    st.plotly_chart(
+        freq_fig,
+        use_container_width=True,
+        config={"displayModeBar": False}
+    )
 st.markdown('</div>', unsafe_allow_html=True)
