@@ -92,7 +92,7 @@ st.markdown(
         background: #ffffff;
         border: 1px solid #e5e7eb;
         border-radius: 18px;
-        padding: 16px 16px 10px 16px;
+        padding: 1px 1px 10px 16px;
         box-shadow: 0 2px 12px rgba(15, 23, 42, 0.04);
         margin-top: 8px;
         margin-bottom: 12px;
@@ -437,7 +437,7 @@ if len(store_list) == 0:
 # =========================================================
 # 10. 顶部筛选
 # =========================================================
-st.markdown('<div class="toolbar-card">', unsafe_allow_html=True)
+# st.markdown('<div class="toolbar-card">', unsafe_allow_html=True)
 selected_store = st.selectbox(
     "请选择店铺",
     options=store_list,
@@ -506,16 +506,16 @@ income_category_order = [
     "75%-100%的机器"
 ]
 income_color_map = {
-    "0-25%的机器": "#9bb7c0",
-    "25%-50%的机器": "#5fa7c1",
-    "50%-75%的机器": "#2f6e8a",
-    "75%-100%的机器": "#17384d"
+    "0-25%的机器": "#6395a5",
+    "25%-50%的机器": "#00a8ed",
+    "50%-75%的机器": "#153ded",
+    "75%-100%的机器": "#051c2c"
 }
 
 freq_category_order = ["TOP25%机器频次均值", "全店频次均值"]
 freq_color_map = {
-    "TOP25%机器频次均值": "#17384d",
-    "全店频次均值": "#5fa7c1"
+    "TOP25%机器频次均值": "#051c2c",
+    "全店频次均值": "#153ded"
 }
 
 st.markdown('<div class="panel-card">', unsafe_allow_html=True)
