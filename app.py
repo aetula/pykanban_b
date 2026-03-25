@@ -383,7 +383,7 @@ def make_grouped_horizontal_bar(
         height=height,
         paper_bgcolor="white",
         plot_bgcolor="white",
-        margin=dict(t=10, b=10, l=0.1, r=10),
+        margin=dict(t=10, b=10, l=0.1, r=30),
         legend=dict(
             orientation="h",
             x=0.00,
