@@ -534,7 +534,7 @@ else:
     st.plotly_chart(
         income_fig,
         use_container_width=True,
-        config={"displayModeBar": False}
+        config={"staticPlot": True}
     )
 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -554,6 +554,6 @@ else:
     st.plotly_chart(
         freq_fig,
         use_container_width=True,
-        config={"displayModeBar": False}
+        config={"staticPlot": True}
     )
 st.markdown('</div>', unsafe_allow_html=True)
