@@ -1,7 +1,7 @@
 from pathlib import Path
 
-import altair as alt
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 
@@ -24,55 +24,64 @@ st.markdown(
     """
     <style>
     .block-container {
-        padding-top: 1.50rem;
+        padding-top: 1.25rem;
         padding-bottom: 2.00rem;
-        max-width: 1400px;
-    }
-
-    h1, h2, h3 {
-        letter-spacing: -0.02em;
+        max-width: 1380px;
     }
 
     .page-title {
-        font-size: 2.00rem;
+        font-size: 1.85rem;
         font-weight: 700;
         color: #1f2937;
-        margin-bottom: 1.25rem;
+        margin-bottom: 1.10rem;
         line-height: 1.25;
+        letter-spacing: -0.02em;
     }
 
     .section-title {
-        font-size: 1.35rem;
-        font-weight: 700;
-        color: #111827;
-        margin: 1.40rem 0 0.85rem 0;
-    }
-
-    .chart-title {
         font-size: 1.20rem;
         font-weight: 700;
         color: #111827;
-        margin: 0.20rem 0 0.80rem 0;
+        margin: 1.20rem 0 0.75rem 0;
+        letter-spacing: -0.01em;
+    }
+
+    .chart-title {
+        font-size: 1.05rem;
+        font-weight: 700;
+        color: #111827;
+        margin: 0 0 0.70rem 0;
+    }
+
+    .toolbar-card {
+        background: rgba(255, 255, 255, 0.78);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        border: 1px solid rgba(229, 231, 235, 0.85);
+        border-radius: 18px;
+        padding: 14px 16px;
+        box-shadow: 0 4px 18px rgba(15, 23, 42, 0.05);
+        margin-bottom: 16px;
     }
 
     .info-card {
         background: #ffffff;
         border: 1px solid #e5e7eb;
         border-radius: 16px;
-        padding: 16px 18px 14px 18px;
+        padding: 14px 16px 12px 16px;
         box-shadow: 0 2px 10px rgba(15, 23, 42, 0.04);
-        min-height: 92px;
+        min-height: 82px;
     }
 
     .info-card-label {
-        font-size: 0.88rem;
+        font-size: 0.84rem;
         color: #6b7280;
         margin-bottom: 8px;
         line-height: 1.20;
     }
 
     .info-card-value {
-        font-size: 1.00rem;
+        font-size: 0.98rem;
         font-weight: 700;
         color: #111827;
         line-height: 1.25;
@@ -83,7 +92,7 @@ st.markdown(
         background: #ffffff;
         border: 1px solid #e5e7eb;
         border-radius: 18px;
-        padding: 18px 18px 10px 18px;
+        padding: 16px 16px 10px 16px;
         box-shadow: 0 2px 12px rgba(15, 23, 42, 0.04);
         margin-top: 8px;
         margin-bottom: 12px;
@@ -91,14 +100,14 @@ st.markdown(
 
     div[data-baseweb="select"] > div {
         border-radius: 12px !important;
-        min-height: 44px;
+        min-height: 42px;
         border-color: #d1d5db !important;
         box-shadow: none !important;
     }
 
     hr {
-        margin-top: 1.25rem !important;
-        margin-bottom: 1.25rem !important;
+        margin-top: 1.10rem !important;
+        margin-bottom: 1.10rem !important;
         border-color: #eceff3 !important;
     }
     </style>
@@ -200,6 +209,11 @@ def prepare_shop_base(merge_data: pd.DataFrame):
 
 # =========================================================
 # 6. 预处理：收入分层
+# 目标结构：
+# y轴 = 1月-12月
+# x轴 = 数值
+# 颜色 = 类别
+# 同月份不同类别并排，不重叠
 # =========================================================
 @st.cache_data(show_spinner=False)
 def prepare_income_long(income_wide: pd.DataFrame):
@@ -222,7 +236,7 @@ def prepare_income_long(income_wide: pd.DataFrame):
     name_series = df["name"].astype(str)
 
     df["月份"] = name_series.str.extract(r"^(\d+月)", expand=False)
-    df["分层"] = (
+    df["类别"] = (
         name_series
         .str.replace(r"^\d+月", "", regex=True)
         .str.strip()
@@ -233,28 +247,34 @@ def prepare_income_long(income_wide: pd.DataFrame):
     )
     df["数值"] = pd.to_numeric(df["数值"], errors="coerce").round(2)
 
-    layer_order = [
+    category_order = [
         "0-25%的机器",
         "25%-50%的机器",
         "50%-75%的机器",
         "75%-100%的机器"
     ]
-    month_order = [f"{i}月" for i in range(12, 0, -1)]
+    month_order = [f"{i}月" for i in range(1, 13)]
 
     df = df.dropna(subset=["店铺", "月份", "月份数值", "数值"])
-    df = df[df["分层"].isin(layer_order)]
+    df = df[df["类别"].isin(category_order)]
+    df = df[df["数值"] > 0]
 
     df["月份"] = pd.Categorical(df["月份"], categories=month_order, ordered=True)
-    df["分层"] = pd.Categorical(df["分层"], categories=layer_order, ordered=True)
+    df["类别"] = pd.Categorical(df["类别"], categories=category_order, ordered=True)
 
     return df.sort_values(
-        ["店铺", "月份数值", "分层"],
-        ascending=[True, False, True]
+        ["店铺", "月份数值", "类别"],
+        ascending=[True, True, True]
     ).reset_index(drop=True)
 
 
 # =========================================================
 # 7. 预处理：频次
+# 目标结构：
+# y轴 = 1月-12月
+# x轴 = 数值
+# 颜色 = 类别
+# 同月份不同类别并排，不重叠
 # =========================================================
 @st.cache_data(show_spinner=False)
 def prepare_freq_long(freq_wide: pd.DataFrame):
@@ -282,202 +302,122 @@ def prepare_freq_long(freq_wide: pd.DataFrame):
         errors="coerce"
     )
 
-    df["指标"] = pd.Series(pd.NA, index=df.index, dtype="object")
-    df.loc[name_series.str.contains("TOP25%机器频次均值", na=False), "指标"] = "TOP25%机器频次均值"
+    df["类别"] = pd.Series(pd.NA, index=df.index, dtype="object")
+    df.loc[name_series.str.contains("TOP25%机器频次均值", na=False), "类别"] = "TOP25%机器频次均值"
     df.loc[
         name_series.str.contains("频次均值", na=False)
         & ~name_series.str.contains("TOP25%机器频次均值", na=False),
-        "指标"
+        "类别"
     ] = "全店频次均值"
 
     df["数值"] = pd.to_numeric(df["数值"], errors="coerce").round(2)
 
-    metric_order = ["TOP25%机器频次均值", "全店频次均值"]
-    month_order = [f"{i}月" for i in range(12, 0, -1)]
+    category_order = ["TOP25%机器频次均值", "全店频次均值"]
+    month_order = [f"{i}月" for i in range(1, 13)]
 
-    df = df.dropna(subset=["店铺", "月份", "月份数值", "指标", "数值"])
-    df = df[df["指标"].isin(metric_order)]
+    df = df.dropna(subset=["店铺", "月份", "月份数值", "类别", "数值"])
+    df = df[df["类别"].isin(category_order)]
+    df = df[df["数值"] > 0]
 
     df["月份"] = pd.Categorical(df["月份"], categories=month_order, ordered=True)
-    df["指标"] = pd.Categorical(df["指标"], categories=metric_order, ordered=True)
+    df["类别"] = pd.Categorical(df["类别"], categories=category_order, ordered=True)
 
     return df.sort_values(
-        ["店铺", "月份数值", "指标"],
-        ascending=[True, False, True]
+        ["店铺", "月份数值", "类别"],
+        ascending=[True, True, True]
     ).reset_index(drop=True)
 
 
 # =========================================================
-# 8. Altair 图表：收入分层
+# 8. Plotly 图表：分组横向条形图（不重叠）
+# y轴 = 月份
+# x轴 = 数值
+# 颜色 = 类别
 # =========================================================
-def make_income_layer_chart(df_income_long: pd.DataFrame, selected_store: str):
-    plot_df = df_income_long[df_income_long["店铺"] == selected_store].copy()
+def make_grouped_horizontal_bar(
+    df_long: pd.DataFrame,
+    selected_store: str,
+    category_order: list[str],
+    color_map: dict[str, str],
+    x_title: str,
+    height: int
+):
+    plot_df = df_long[df_long["店铺"] == selected_store].copy()
     if plot_df.empty:
         return None
 
-    layer_order = [
-        "0-25%的机器",
-        "25%-50%的机器",
-        "50%-75%的机器",
-        "75%-100%的机器"
-    ]
-    month_order = [f"{i}月" for i in range(12, 0, -1)]
+    month_order = [f"{i}月" for i in range(1, 13)]
 
-    plot_df["标签"] = plot_df["数值"].map(lambda x: f"{x:.2f}")
+    fig = go.Figure()
 
-    color_scale = alt.Scale(
-        domain=layer_order,
-        range=["#9bb7c0", "#5fa7c1", "#2f6e8a", "#17384d"]
-    )
+    for category in category_order:
+        sub = plot_df[plot_df["类别"] == category].copy()
+        if sub.empty:
+            continue
 
-    base = alt.Chart(plot_df).encode(
-        y=alt.Y(
-            "月份:N",
-            sort=month_order,
-            title=None,
-            axis=alt.Axis(labelFontSize=12, title=None, labelColor="#374151")
-        ),
-        x=alt.X(
-            "数值:Q",
-            title="数值",
-            axis=alt.Axis(
-                labelFontSize=11,
-                titleFontSize=12,
-                grid=True,
-                gridColor="#e5e7eb",
-                labelColor="#374151",
-                titleColor="#374151"
+        fig.add_trace(
+            go.Bar(
+                x=sub["数值"],
+                y=sub["月份"],
+                name=category,
+                orientation="h",
+                marker=dict(color=color_map.get(category, "#4b5563")),
+                text=sub["数值"].map(lambda v: f"{v:.2f}"),
+                textposition="outside",
+                cliponaxis=False,
+                offsetgroup=str(category),
+                legendgroup=str(category),
+                hovertemplate=(
+                    "月份: %{y}<br>"
+                    "类别: %{fullData.name}<br>"
+                    "数值: %{x:.2f}<extra></extra>"
+                )
             )
-        ),
-        color=alt.Color(
-            "分层:N",
-            sort=layer_order,
+        )
+
+    fig.update_layout(
+        barmode="group",   # 关键：并排，不重叠
+        bargap=0.28,
+        bargroupgap=0.08,
+        height=height,
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        margin=dict(t=10, b=30, l=10, r=90),
+        legend=dict(
+            orientation="h",
+            x=0.00,
+            y=1.10,
+            xanchor="left",
+            yanchor="bottom",
             title=None,
-            scale=color_scale,
-            legend=alt.Legend(
-                orient="top",
-                direction="horizontal",
-                labelFontSize=11
-            )
+            font=dict(size=12)
         ),
-        yOffset=alt.YOffset("分层:N", sort=layer_order),
-        tooltip=[
-            alt.Tooltip("月份:N", title="月份"),
-            alt.Tooltip("分层:N", title="分层"),
-            alt.Tooltip("数值:Q", title="数值", format=".2f")
-        ]
-    )
-
-    bars = base.mark_bar(size=16, cornerRadiusEnd=3)
-
-    text = base.mark_text(
-        align="left",
-        baseline="middle",
-        dx=4,
-        fontSize=11,
-        color="#374151"
-    ).encode(
-        text="标签:N"
-    )
-
-    chart = (
-        (bars + text)
-        .properties(height=520)
-        .configure_view(stroke=None)
-        .configure_axis(domain=False)
-        .configure_legend(
-            labelColor="#374151",
-            symbolType="square"
+        xaxis=dict(
+            title=x_title,
+            showgrid=True,
+            gridcolor="#e5e7eb",
+            zeroline=False,
+            tickfont=dict(size=12, color="#374151"),
+            title_font=dict(size=12, color="#374151")
+        ),
+        yaxis=dict(
+            title="",
+            categoryorder="array",
+            categoryarray=month_order[::-1],
+            tickfont=dict(size=12, color="#374151")
+        ),
+        font=dict(
+            family="Arial, PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif",
+            color="#374151",
+            size=12
         )
     )
 
-    return chart
+    return fig
 
 
 # =========================================================
-# 9. Altair 图表：频次
-# =========================================================
-def make_freq_chart(df_freq_long: pd.DataFrame, selected_store: str):
-    plot_df = df_freq_long[df_freq_long["店铺"] == selected_store].copy()
-    if plot_df.empty:
-        return None
-
-    metric_order = ["TOP25%机器频次均值", "全店频次均值"]
-    month_order = [f"{i}月" for i in range(12, 0, -1)]
-
-    plot_df["标签"] = plot_df["数值"].map(lambda x: f"{x:.2f}")
-
-    color_scale = alt.Scale(
-        domain=metric_order,
-        range=["#17384d", "#5fa7c1"]
-    )
-
-    base = alt.Chart(plot_df).encode(
-        y=alt.Y(
-            "月份:N",
-            sort=month_order,
-            title=None,
-            axis=alt.Axis(labelFontSize=12, title=None, labelColor="#374151")
-        ),
-        x=alt.X(
-            "数值:Q",
-            title="频次",
-            axis=alt.Axis(
-                labelFontSize=11,
-                titleFontSize=12,
-                grid=True,
-                gridColor="#e5e7eb",
-                labelColor="#374151",
-                titleColor="#374151"
-            )
-        ),
-        color=alt.Color(
-            "指标:N",
-            sort=metric_order,
-            title=None,
-            scale=color_scale,
-            legend=alt.Legend(
-                orient="top",
-                direction="horizontal",
-                labelFontSize=11
-            )
-        ),
-        yOffset=alt.YOffset("指标:N", sort=metric_order),
-        tooltip=[
-            alt.Tooltip("月份:N", title="月份"),
-            alt.Tooltip("指标:N", title="指标"),
-            alt.Tooltip("数值:Q", title="频次", format=".2f")
-        ]
-    )
-
-    bars = base.mark_bar(size=18, cornerRadiusEnd=3)
-
-    text = base.mark_text(
-        align="left",
-        baseline="middle",
-        dx=4,
-        fontSize=11,
-        color="#374151"
-    ).encode(
-        text="标签:N"
-    )
-
-    chart = (
-        (bars + text)
-        .properties(height=420)
-        .configure_view(stroke=None)
-        .configure_axis(domain=False)
-        .configure_legend(
-            labelColor="#374151",
-            symbolType="square"
-        )
-    )
-
-    return chart
-
-
-# =========================================================
-# 10. 加载数据
+# 9. 加载数据
 # =========================================================
 try:
     merge_data, income_wide, freq_wide = load_raw_data()
@@ -494,13 +434,15 @@ if len(store_list) == 0:
 
 
 # =========================================================
-# 11. 顶部
+# 10. 顶部筛选
 # =========================================================
+st.markdown('<div class="toolbar-card">', unsafe_allow_html=True)
 selected_store = st.selectbox(
     "请选择店铺",
     options=store_list,
     index=0
 )
+st.markdown('</div>', unsafe_allow_html=True)
 
 if selected_store not in shop_base.index:
     st.warning("当前店铺没有匹配数据。")
@@ -515,7 +457,7 @@ st.markdown(
 
 
 # =========================================================
-# 12. 基础信息
+# 11. 基础信息
 # =========================================================
 st.markdown('<div class="section-title">基础信息</div>', unsafe_allow_html=True)
 c1, c2, c3, c4 = st.columns(4)
@@ -552,26 +494,57 @@ with c5:
 
 
 # =========================================================
-# 13. 图表区域
+# 12. 图表分析
 # =========================================================
 st.markdown('<div class="section-title">图表分析</div>', unsafe_allow_html=True)
 
-with st.container():
-    st.markdown('<div class="panel-card">', unsafe_allow_html=True)
-    st.markdown('<div class="chart-title">机器收入分层月度表现</div>', unsafe_allow_html=True)
-    income_chart = make_income_layer_chart(income_long, selected_store)
-    if income_chart is None:
-        st.info("当前店铺暂无收入分层数据。")
-    else:
-        st.altair_chart(income_chart, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+income_category_order = [
+    "0-25%的机器",
+    "25%-50%的机器",
+    "50%-75%的机器",
+    "75%-100%的机器"
+]
+income_color_map = {
+    "0-25%的机器": "#9bb7c0",
+    "25%-50%的机器": "#5fa7c1",
+    "50%-75%的机器": "#2f6e8a",
+    "75%-100%的机器": "#17384d"
+}
 
-with st.container():
-    st.markdown('<div class="panel-card">', unsafe_allow_html=True)
-    st.markdown('<div class="chart-title">机器频次月度表现</div>', unsafe_allow_html=True)
-    freq_chart = make_freq_chart(freq_long, selected_store)
-    if freq_chart is None:
-        st.info("当前店铺暂无频次数据。")
-    else:
-        st.altair_chart(freq_chart, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+freq_category_order = ["TOP25%机器频次均值", "全店频次均值"]
+freq_color_map = {
+    "TOP25%机器频次均值": "#17384d",
+    "全店频次均值": "#5fa7c1"
+}
+
+st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+st.markdown('<div class="chart-title">机器收入分层月度表现</div>', unsafe_allow_html=True)
+income_fig = make_grouped_horizontal_bar(
+    df_long=income_long,
+    selected_store=selected_store,
+    category_order=income_category_order,
+    color_map=income_color_map,
+    x_title="数值",
+    height=1200
+)
+if income_fig is None:
+    st.info("当前店铺暂无收入分层数据。")
+else:
+    st.plotly_chart(income_fig, use_container_width=True)
+st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+st.markdown('<div class="chart-title">机器频次月度表现</div>', unsafe_allow_html=True)
+freq_fig = make_grouped_horizontal_bar(
+    df_long=freq_long,
+    selected_store=selected_store,
+    category_order=freq_category_order,
+    color_map=freq_color_map,
+    x_title="频次",
+    height=800
+)
+if freq_fig is None:
+    st.info("当前店铺暂无频次数据。")
+else:
+    st.plotly_chart(freq_fig, use_container_width=True)
+st.markdown('</div>', unsafe_allow_html=True)
