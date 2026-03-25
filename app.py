@@ -197,13 +197,14 @@ def prepare_shop_base(merge_data: pd.DataFrame):
     df = df.dropna(subset=["店铺"])
     df = df[df["店铺"] != ""]
 
+    # 保留原始出现顺序，不排序
     shop_base = (
         df.drop_duplicates(subset=["店铺"], keep="first")
         .set_index("店铺", drop=False)
-        .sort_index()
     )
 
     store_list = shop_base["店铺"].tolist()
+
     return shop_base, store_list
 
 
@@ -382,11 +383,11 @@ def make_grouped_horizontal_bar(
         height=height,
         paper_bgcolor="white",
         plot_bgcolor="white",
-        margin=dict(t=10, b=30, l=10, r=90),
+        margin=dict(t=10, b=10, l=10, r=30),
         legend=dict(
             orientation="h",
             x=0.00,
-            y=1.10,
+            y=1.02,
             xanchor="left",
             yanchor="bottom",
             title=None,
